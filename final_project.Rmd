@@ -1,0 +1,789 @@
+---
+title: "Final Project"
+author: "Minseo Kim"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    code_folding: hide
+      
+---
+## Introduction
+
+<br>
+On the 31st of December 2019, the first case of an unknown pneumonia-related disease was reported in Wuhan, China. Soon after the first case, the world was disrupted mainly by this contagious disease, SARS-CoV-2, commonly named COVID-19. The significant outbreak initially occurred in countries like China, the United States, Italy, Spain and the United Kingdom. As we live in the present world with more high-interconnected than ever, it was a matter of time before this country-based phenomenon transitioned to a worldwide pandemic.
+
+At present, three years after the beginning of the pandemic, there were certain nations containing the spread of COVID-19, while some failed to ameliorate the infectious nature of the virus. One notable factor could be the vaccination doses. Nevertheless, strict containment policies could have been the key before the invention of the vaccine. Also, different features of countries, such as GDP per capita, life expectancy or population density, could have also had an impact.   
+
+Our World in Data, an online scientific publication that aims to provide research and data to solve the world's biggest problems, is a reputable source of COVID-19-related data. With more than 89 million unique users visiting the website, COVID-related data are uploaded daily to gain knowledge on COVID-19 more understandable. The wide-range of data help us look into factors that helped containing COVID-19 spread.  
+
+
+<br>
+
+## Research Question
+
+<br> 
+Notable experts choose vaccinations as the factor having a significant impact in reducing the spread of COVID-19. However, this analysis aims to investigate what other factors could have had more influences in ameliorating the case counts and death counts before herd immunity was formed due to vaccinations. 
+
+There was a significant difference during the pandemic with and without vaccines. We aim to investigate what other methods were more impactful in containing the disease during the unsettled period, without proper treatment and vaccination. The time of analysis will take place from the initial outbreak on Jan 2020 until June 2021, when a noticeable peak took place worldwide. Furthermore, the analysis will also focus on how increased strictness and spread worldwide have impacted the performances of the world economy.
+
+The tentative observation we expect to observe is that higher vaccinations, stricter government policy, and well-established healthcare infrastructure would ameliorate the spread of the virus and reduce the mortality rate. Also, strict government policy, lockdown, disrupted supply chains, and depressed economic activities would contrast economic performances before and after the outbreak.
+
+
+<br>
+
+## Containment Observation
+
+<br> 
+With the credible data sources collected, a regression was run by fixing the daily infected count and death count as the dependent variable. The independent variables in this regression include vaccination per million, tests taken per case, containment index, stringency index, Gross Domestic Product per capita, life expectancy and population density. Here, a time-lag regression model was implemented on some independent variables such as vaccination per million, containment index and stringency index by the frequency of 14 days. This is to provide a comparably better result to show the effects of policies that take considerable time. The frequency value used is 14 days considering the quarantine days and settling time. 
+<br>
+
+```{r, include = F}
+# setwd("~/Desktop/Data Analysis /Final Project")
+#library(tidyr)
+#library(tidyverse)
+library(stargazer)
+library(plotly)
+library(dotwhisker)
+library(ggplot2)
+library(RColorBrewer)
+library(DiagrammeR)
+library(dplyr)
+library(countrycode)
+library(readr)
+library(maps)
+library(viridis)
+library(readxl)
+library(ggpubr)
+library(dynlm)
+# library(sf)
+```
+
+
+```{r, include = F}
+
+# reading the csv and excel file data needed for the analysis 
+health_index = read.csv('covid-containment-and-health-index.csv')
+
+covid = read.csv("covid_data.csv")
+
+gdp = read.csv('gdp_health_expenditure.csv')
+gdp <- head(gdp, -6)
+
+# excel file for gdp per capita projection pre-covid and during covid
+projection_2019 = read_excel("projection_2019.xlsx")
+projection_2021 = read_excel("projection_2021.xlsx")
+
+# map_data = read.csv("map_data.csv")
+
+# policy = read.csv('policies.csv')
+```
+
+
+```{r, include = F}
+# merging the two datasets by the ISO_code and the (year/month/date)
+
+# *** 데이터 merge하기전에 date 14 delay 수정하기
+
+merge_data <- merge(health_index, covid,
+                    by.x = c("Code", "Day"),
+                    by.y = c("iso_code", "date"),
+                    all.x = TRUE, all.y = TRUE)
+
+# subsetting the columns necessary for the research 
+
+merge_data = subset(merge_data, select = c(Code, Day, Entity, containment_index, stringency_index, 
+                                           total_cases, total_cases_per_million, new_cases, new_cases_per_million, 
+                                           total_deaths, total_deaths_per_million, new_deaths, new_deaths_per_million, 
+                                           total_tests, new_tests, tests_per_case, 
+                                           total_vaccinations, new_vaccinations, new_vaccinations_smoothed_per_million, 
+                                           population, population_density, gdp_per_capita, life_expectancy))
+
+# merge the previous dataset with other dataset
+# For a final dataset
+merge_data2 <- merge(merge_data, gdp,
+                     by.x = c("Code"),
+                     by.y = c("Country.Code"),
+                     all.x = FALSE, all.y = TRUE)
+
+rm(merge_data)
+```
+
+```{r, include = F}
+
+# removing the data without health expenditure values 
+# ***
+new_data <- merge_data2 %>% dplyr::filter(!(health_expenditure_prop_GDP_2019 == ".."))
+
+rm(merge_data2)
+
+# Removing the duplicating column
+new_data = subset(new_data, select = -c(Country.Name))
+
+
+# make the columns made of characters into numeric format
+
+new_data$health_expenditure_prop_GDP_2019 = as.numeric(as.character(new_data$health_expenditure_prop_GDP_2019))
+
+new_data$GDP_capita_2019 = as.numeric(as.character(new_data$GDP_capita_2019))
+new_data$GDP_capita_2020 = as.numeric(as.character(new_data$GDP_capita_2020))
+
+new_data$Unemployment_rate_2019 = as.numeric(as.character(new_data$Unemployment_rate_2019))
+new_data$Unemployment_rate_2020 = as.numeric(as.character(new_data$Unemployment_rate_2020))
+
+
+# *****  The Final dataset for regression analysis 
+new_data = new_data %>%
+  filter(new_cases >= 0)
+
+new_data$difference_rate = new_data$Unemployment_rate_2020 - new_data$Unemployment_rate_2019
+new_data$difference_gdp = new_data$GDP_capita_2020 - new_data$GDP_capita_2019
+
+# summary(new_data)
+```
+
+```{r, include = F}
+# Country with Top 5 highest cases -> subset so that causality can be explained on its impact on economy (이 부분 나중에 수정)
+
+country_data = subset(new_data, select = c(Entity, Code, Day,
+                                           containment_index, stringency_index, 
+                                           new_cases, new_deaths,
+                                           total_cases, total_deaths,
+                                           health_expenditure_prop_GDP_2019,
+                                           Unemployment_rate_2019, Unemployment_rate_2020, 
+                                           GDP_capita_2019, GDP_capita_2020, 
+                                           difference_rate, difference_gdp, population, population_density))
+
+rm(gdp, covid, health_index)
+
+# difference between the unemployment rate in 2019 and 2020
+
+country <- country_data %>% 
+             group_by(Code) %>%
+             filter(new_cases == max(new_cases)) 
+
+```
+
+```{r, include = F}
+# *** Dataset for the highest new_case observed in each country 
+# group_by the entity so only one country shows 
+
+highest_case <- country_data %>% 
+             group_by(Code) %>%
+             filter(new_cases == max(new_cases))
+
+highest_case$cases_per_pop = highest_case$new_cases / highest_case$population_density
+highest_case$deaths_per_pop = highest_case$new_deaths / highest_case$population_density
+
+```
+
+
+```{r, include = F}
+# Linear Regression model for COVID-19 new cases and new deaths 
+# With various possible factors (independent variables) that can impact the spread / death
+
+lm.rate_model <- lm(new_cases ~ lag(new_vaccinations_smoothed_per_million, frequency = 14) + tests_per_case + 
+                      lag(containment_index, frequency = 14) + 
+                      lag(stringency_index, frequency = 14) + 
+                      gdp_per_capita + life_expectancy + population_density, 
+                      data = new_data)
+
+summary(lm.rate_model)
+
+
+lm.death_model <- lm(new_deaths ~ lag(new_vaccinations_smoothed_per_million, frequency = 14) + tests_per_case +
+                      lag(containment_index, frequency = 14) + 
+                      lag(stringency_index, frequency = 14) + 
+                      gdp_per_capita + life_expectancy + population_density, 
+                      data = new_data)
+
+summary(lm.death_model)
+
+```
+
+<br>
+
+```{r latextable, results = 'asis'}
+# Table to show the Linear regression of Infection and Death cases 
+
+stargazer(lm.rate_model, lm.death_model, type = 'html',
+          title = "Impact of Vaccine / Policies / Other Factors on COVID-19 Spread / Death",
+          dep.var.labels = c("Daily Infection", "Daily Death"),
+          covariate.labels = c("New Vaccination per million", "Tests Done per Case", 
+                               "Containment Index", "Stringency Index", "GDP per Capita", 
+                               "Life Expectancy", "Pop Density"))
+
+```
+<br>
+
+By the linear regression, it is observable that an increase in the vaccination per million reduces the daily infection on average by 0.1 cases and reduces the death cases on average by 0.002. Although this is not a significant factor in reducing the spread rate and death rate, this certainly infers that vaccines still had a role in reducing the spread and death during the early pandemic, where the supply of vaccinations and administration of doses was far from complete during this stage. Moreover, according to observations from BioMed Central, the COVID-19 vaccine requires about 3 to 24 weeks of duration to form immunity against the virus, which is still a meaningful observation as it was during the early stages of development. 
+
+<br>
+
+Notably, the variable tests done per case shows meaningful observations. The more covid tests were taken per positive case, the more it reduced the daily infection rate by 0.57 on average. This highlights the importance of frequent tests and measurements of the virus as it increases the chance of containing the virus by testing a susceptible group of populations.
+
+<br>
+
+Nevertheless, the observation of population density could be a source of conflict. Higher the population density, the lower the daily infection cases by 0.44 on average. During the initial stages of the pandemic, countries with high population density, like India, faced exponential disease growth as one positive case increased the susceptible group in a much more significant aspect. However, one could argue that higher population density is a subject of forming herd immunity to prohibit the spread and death of the virus, adhering to the concept of classical herd immunity.
+
+<br>
+
+Here, we could observe a significantly large concept of life expectancy in reducing the spread of the virus. According to the observation, the higher the nation's life expectancy, the lower the daily cases on average by 185.8 and the lower the death cases by 1.5. This significance highlights the importance of factors contributing to higher life expectancy in containing the disease. For instance, more frequent handwashing, better and healthier nutrition, workout habits, stress level, and infrastructure in the healthcare system all positively contribute to higher life expectancy. These aspects also influence the immune system, which effectively contains the disease, providing an environment and conditions that make spread difficult and lower the mortality rate. 
+
+<br>
+
+However, essential measures such as the containment and stringency indexes show conflicting results. The higher the containment index and the stringency index, the higher the daily cases on average by 62.2 and 169.6. The containment Index and Stringency Index are numerical indexes based on various restrictive measures in categories. These measures include workplace, public places, school closings, mask measures, testing policies, quarantine measures and various factors that attempt to reduce the spread. Here, the index ranges from 0 to 100, where 0 is the least strict and 100 is the most strict form of restriction. The observation shows stricter the policy, the higher the infected rate, although a time delay regression of 14 days was implemented. This is because the data shows that the containment index rises following the severity of the virus. For instance, the majority of the government increased the containment policies as the nation confronted the peak of the spread, indicating the highest containment and stringency index was observed when the highest daily cases were imminent. With this, this observation does not indicate the higher containment index leading to higher COVID cases; instead, there are higher restrictions when the pandemic's peak was imminent to mitigate the casualties.
+
+<br>
+
+## World Map
+
+<br> 
+The figures below depict the world map containing essential information about the containment index, the daily cases per population, and the daily death count per population of different countries. The figures below provide better information about the magnitude of the containment index of different countries in the times when the daily case was the highest, contrasting the measures taken by the governments when the pandemic peak was reached in the time frame. The case and death counts were divided by the population for a fair camparison.
+
+```{r, include = F}
+
+# data handling to show missing countries in the data: US, Uk and Congo
+
+world_map = ggplot2::map_data("world")
+countries = countrycode::countryname_dict
+
+world_map_countries = unique(world_map$region)
+world_map_countries = as.data.frame(world_map_countries)
+
+colnames(world_map_countries) = "country.name"
+
+
+world_map_countries$country.name = ifelse(world_map_countries$country.name == "USA", "United States", 
+                                                 world_map_countries$country.name)
+
+world_map_countries$country.name = ifelse(world_map_countries$country.name == "UK", "United Kingdom", 
+                                                 world_map_countries$country.name)
+
+world_map_countries$country.name = ifelse(world_map_countries$country.name == "Republic of Congo", "Republic of the Congo", 
+                                                 world_map_countries$country.name)
+
+
+to_fix = setdiff(world_map_countries$country.name, unique(countries$country.name.en))
+
+no_need_to_fix = subset(world_map_countries, country.name %in% setdiff(world_map_countries$country.name, to_fix))
+
+to_fix = subset(world_map_countries, country.name %in% to_fix)
+
+fixed = left_join(to_fix, countries, by = c("country.name" = "country.name.alt"))
+
+no_need_to_fix$country.name.en = no_need_to_fix$country.name
+
+world_map_countries = rbind(no_need_to_fix, fixed)
+
+
+countries = (countrycode::codelist)
+
+isos = left_join(world_map_countries, select(countries, c(country.name.en, iso3c)), by = c("country.name.en"))
+
+world_map = left_join(world_map, isos, by = c("region" = "country.name"))
+
+rm(countries, fixed, isos, no_need_to_fix, to_fix, world_map_countries)
+
+world_map$iso3c = ifelse(world_map$region=="USA", "USA", world_map$iso3c)
+world_map$iso3c = ifelse(world_map$region=="UK", "GBR", world_map$iso3c)
+
+world_map <- world_map %>% 
+             group_by(iso3c)
+
+```
+
+```{r, include = F}
+# Filtering the data into needed pieces 
+
+highest_case <- left_join(world_map, highest_case, by = c("iso3c"="Code"))
+
+highest_case_filter = select(highest_case, c(long, lat, 
+                                             iso3c, group, 
+                                             containment_index, stringency_index, 
+                                             new_cases, new_deaths,
+                                             cases_per_pop, deaths_per_pop))
+
+```
+
+```{r, include = T}
+
+# plot to show the strict government policy and the highest daily infected case & daily death case 
+
+# world map image with containment index 
+
+index <- ggplot() + 
+  
+  geom_polygon(data = highest_case_filter, 
+               aes(x = long, y = lat, group = group, fill = containment_index)) +
+  
+  scale_fill_continuous(name = "Containmnet Index",
+                        low = "yellow", high = 'darkgreen',
+                        breaks = c(20,40,60,80), na.value = "grey50") +
+  
+  labs(title = "COVID-19 Containment and Health Index")
+
+
+plot(index)
+
+```
+
+<br>
+
+```{r, include = T}
+
+# world map image with highest daily case 
+
+infection <- ggplot() + 
+  
+  geom_polygon(data = highest_case_filter, 
+               aes(x = long, y = lat, group = group, fill = cases_per_pop)) +
+  
+  scale_fill_continuous(name = "Infected Count",
+                        low = "red", high = 'darkred',
+                        na.value = 'grey50') +
+  
+  labs(title = "Highest Dailly Infection")
+
+
+plot(infection)
+
+
+```
+
+<br>
+
+```{r, include = T}
+
+# world map image with highest death rate 
+
+death <- ggplot() +
+  
+  geom_polygon(data = highest_case_filter, 
+               aes(x = long, y = lat, group = group, fill = deaths_per_pop)) +
+  
+  scale_fill_continuous(name = "Death Count",
+                        low = "red", high = 'black',
+                        na.value = "grey50") +
+  labs(title = "Highest Daily Death Count")
+
+
+plot(death)
+
+
+# ggplot(highest_case_filter, aes(long, lat, group = group)) + 
+  
+ # geom_polygon(aes(fill = containment_index), color = 'black', alpha = 0.8) +
+  
+  # scale_fill_viridis(option = "magma",discrete = F, direction = -1)
+
+# ggarrange(ggarrange(index, infection, death), 
+  #                  ncol = 1, nrow = 3)
+
+```
+
+<br>
+
+As can be visible from the figures above, we can observe that Brazil, the United States and Russia were disrupted mainly due to the pandemic, hitting the highest death count per population, with cases per population also visible to be more robust red than other countries, indicating higher cases per population as well. 
+
+The connection we can make with poor containment of diseases can be drawn to the containment index. These countries implemented a containment index of 45-65, which is just about moderately strict, not in the form of the strictest policy that can be implemented.
+
+<br>
+
+## Economic Performance Observation
+
+<br>
+During the outbreak, there was a significant trade-off between governments to either implement restrictive policies that prohibited the spread of the virus or promote loosened policies that aimed to improve economic performance during the economic downturn. Restrictive policies indicate a higher containment index, which came about by closing down workplaces, schools and various facilities to prevent multi-infection, but significantly reducing the production level contributing to the economic downturn. On the other hand, implementing loosened policies brought about sustained production quantity in exchange for a higher infectious rate. 
+
+The regression below shows the impact of changes in the containment policies on the percentage changes in the Unemployment Rate and the Gross Domestic Product per capita. The containment index was filtered by individual countries with the highest containment index, while the economic performance indicators are data from World Bank in the years 2020 and 2021. 
+
+
+```{r, include = F}
+
+# Regression model 
+# Depicts how GDP and Unemployment rate has varied over time
+
+model1 <- lm(difference_rate ~ containment_index, data = country)
+model2 <- lm(difference_gdp ~ containment_index, data = country)
+
+```
+
+<br>
+
+```{r mylatextable, results = "asis"}
+
+stargazer(model1, model2, type = 'html',
+          title = "Impact of Strict Gov Policies on Unemployment Rate / GDP",
+          dep.var.labels = c("Changes in Unemployment (%)", "Changes in GDP(%)"),
+          covariate.labels = c("Containment Index"))
+
+```
+
+<br>
+<br>
+
+As can be seen, an increase in the containment index leads to higher unemployment on average of about 0.01 while it reduces the Gross Domestic Product per capita by 24.2 on average. This proves the correlation of strict policies severely impacting economic performance. Nevertheless, the impact on the unemployment rate may need more statistical significance as the data includes the point when the containment index is the highest. As can be visible from the figures above, we can observe that Brazil, the United States and Russia were disrupted mainly due to the pandemic, hitting the highest death count per population, with cases per population also visible to be more robust red than other countries, indicating higher cases per population as well. The connection we can make with poor containment of diseases can be drawn to the containment index. These countries implemented a containment index of 45-65, which is moderately strict, not in the form of the strictest policy that can be implemented.
+
+<br>
+
+``` {r warning=FALSE, message=FALSE}
+
+# Plotting of how different policy (containment index) impacts the unemployment rate after implemented 
+
+theme_set(theme_bw())
+
+graph1 <- ggplot(model1, 
+                 aes(x = containment_index, y = difference_rate, color = containment_index)) +
+  
+  geom_line(color = "blue", linetype = "dotted", size = .3) + 
+  
+  geom_point(color = "firebrick", shape = "diamond", size = 2) + 
+  
+  geom_smooth(method = "lm",
+    formula =  y ~ x + I(x^2) + I(x^3) + I(x^4) + I(x^5) + I(x^6) + I(x^7),
+    color = "black",
+    fill = "firebrick") +
+  
+  labs(x = "Government Containment Index", y = "Difference in Unemployment", color = "Containment Index") + 
+  
+  ggtitle("Strict Covid Policy on Unemployment Rate") +
+  
+  theme(axis.title.x = element_text(margin = margin(t = 9), size = 12),
+        axis.title.y = element_text(margin = margin(r = 9), size = 12))
+  
+# ggplotly(graph1)
+plot(graph1)
+
+graph2 <- ggplot(model2, 
+                 aes(x = containment_index, y = difference_gdp, color = containment_index)) +
+  
+  geom_line(color = "blue", linetype = "dotted", size = .3) + 
+  
+  geom_point(color = "firebrick", shape = "diamond", size = 2) + 
+  
+  geom_smooth(method = "lm",
+    formula =  y ~ x + I(x^2) + I(x^3) + I(x^4) + I(x^5) + I(x^6) + I(x^7),
+    color = "black",
+    fill = "firebrick") +
+  
+  labs(x = "Government Containment Index", y = "Difference in GDP per capita", color = "Containment Index") + 
+  
+  ggtitle("Strict Covid Policy on Economic Growth") +
+  
+  theme(axis.title.x = element_text(margin = margin(t = 9), size = 12),
+        axis.title.y = element_text(margin = margin(r = 9), size = 12))
+
+# ggplotly(graph2)
+plot(graph2)
+
+```
+<br>
+
+These figures visualize the trend line of higher containment index impacting the changes in the unemployment rate and the gross domestic product per capita. Although there is a presence of few outliers, this visualization exhibits the expected behaviour, higher containment index contributing to a higher unemployment rate and lower gross domestic product per capita.
+
+<br>
+
+
+```{r, include = F}
+# Data visualization to show how the world economy has been impacted due to Covid-19
+# World projection data 
+
+# Changed from a character format to the numeric format 
+
+#
+projection_2019 = projection_2019[5:11, ]
+
+projection_2019$`Country Group Name` = as.numeric(projection_2019$`Country Group Name`)
+projection_2019$World = as.numeric(projection_2019$World)
+projection_2019$`Major advanced economies (G7)` = as.numeric(projection_2019$`Major advanced economies (G7)`)
+projection_2019$`European Union` = as.numeric(projection_2019$`European Union`)
+projection_2019$`Emerging and developing Asia` = as.numeric(projection_2019$`Emerging and developing Asia`)
+projection_2019$`Sub-Saharan Africa` = as.numeric(projection_2019$`Sub-Saharan Africa`)
+
+#
+projection_2021 = projection_2021[5:11, ]
+
+projection_2021$`Country Group Name` = as.numeric(projection_2021$`Country Group Name`)
+projection_2021$World = as.numeric(projection_2021$World)
+projection_2021$`Major advanced economies (G7)` = as.numeric(projection_2021$`Major advanced economies (G7)`)
+projection_2021$`European Union` = as.numeric(projection_2021$`European Union`)
+projection_2021$`Emerging and developing Asia` = as.numeric(projection_2021$`Emerging and developing Asia`)
+projection_2021$`Sub-Saharan Africa` = as.numeric(projection_2021$`Sub-Saharan Africa`)
+```
+
+
+## World Projection
+
+<br>
+
+Annually, the International Monetary Fund releases economic performance projections for different years to indicate the progress of different countries' economic development and growth. The report released on October 2019 exhibits positive economic growth in various countries. However, due to the global pandemic, which hit soon after, the organization released another report that minimized the prospect of different countries as the pandemic and different policies to mitigate the spread showed the capacity and vulnerability of countries' infrastructures and supply chains. 
+
+<br> 
+
+The visualizations below show different projections on different reports. The red-highlighted trend line depicts economic performance prospect released on Oct 2019 while the blue-highlighted trend line depicts economic performance prospect released on Oct 2021.
+
+<br>
+
+``` {r warning=FALSE, message=FALSE}
+
+world_2019 = dplyr::select(projection_2019, c(`Country Group Name`, World))
+world_2021 = dplyr::select(projection_2021, c(`Country Group Name`, World))
+
+world_2019$`Year 2019` = 1
+world_2021$`Year 2019` = 0
+world = dplyr::bind_rows(world_2019, world_2021)
+
+rm(world_2019)
+rm(world_2021)
+
+# ***
+theme_set(theme_bw())
+
+world_gdp <- ggplot(world, aes(x = `Country Group Name`, y = World)) +
+ 
+  geom_point(data = world,
+             aes(x = `Country Group Name`, y = World,
+                 color = ifelse(`Year 2019` == 1, "blue", "red"),
+                 shape = ifelse(`Year 2019` == 1, 'circle', 'diamond')),
+             show.legend = FALSE, size = 2.5) +
+ 
+  geom_smooth(data = world,
+              aes(x = `Country Group Name`, y = World,
+                  color = ifelse(`Year 2019` == 1, "blue", "red"),
+                  fill = ifelse(`Year 2019` == 1, 'blue', 'firebrick')),
+              method = "lm", linetype = 'dotted', 
+              size = 0.5) +
+   
+  labs(x = "Year",
+       y = "Gross Domestic Product, current prices ($ billion)") +
+  
+  guides(fill = FALSE) +
+ 
+  scale_color_manual(name = "Projected GDP per Capita", values = c('red','blue'), labels = c('Year 2019', 'Year 2021')) +
+ 
+  ggtitle("Projected GDP per capita") +
+ 
+  theme(axis.title.x = element_text(margin = margin(t = 9), size = 12),
+        axis.title.y = element_text(margin = margin(r = 9), size = 12),
+        legend.position = 'bottom')  
+
+
+plot(world_gdp)
+
+```
+
+
+## G7
+```{r warning=FALSE, message=FALSE}
+
+G7_2019 = dplyr::select(projection_2019, c(`Country Group Name`, `Major advanced economies (G7)`))
+G7_2021 = dplyr::select(projection_2021, c(`Country Group Name`, `Major advanced economies (G7)`))
+
+G7_2019$yr2019 = 1
+G7_2021$yr2019 = 0
+G7 = dplyr::bind_rows(G7_2019, G7_2021)
+
+rm(G7_2019)
+rm(G7_2021)
+
+# ***
+
+G7_gdp <- ggplot(G7, aes(x = `Country Group Name`, y = `Major advanced economies (G7)`)) +
+  
+  geom_point(data = G7, 
+             aes(x = `Country Group Name`, y = `Major advanced economies (G7)`,
+                 color = ifelse(yr2019 == 1, "blue", 'red'),
+                 shape = ifelse(yr2019 == 1, "cirlce", "diamond")),
+             show.legend = FALSE, size = 2.5) +
+  
+  geom_smooth(data = G7, 
+              aes(x = `Country Group Name`, y = `Major advanced economies (G7)`,
+                  color = ifelse(yr2019 == 1, "blue", "red"),
+                  fill = ifelse(yr2019 == 1, "blue", "fireback")),
+              method = "lm", linetype = 'dotted', 
+              size = 0.5) +
+  
+  labs(x = "Year",
+       y = "Gross Domestic Product, current prices ($ billion)") +
+  
+  guides(fill = FALSE) +
+ 
+  scale_color_manual(name = "Projected GDP per Capita", values = c('red','blue'), labels = c('Year 2019', 'Year 2021')) +
+ 
+  ggtitle("Projected GDP per capita") +
+ 
+  theme(axis.title.x = element_text(margin = margin(t = 9), size = 12),
+        axis.title.y = element_text(margin = margin(r = 9), size = 12),
+        legend.position = 'bottom')  
+
+
+plot(G7_gdp)
+
+```
+
+
+## EU
+```{r warning=FALSE, message=FALSE}
+
+EU_2019 = dplyr::select(projection_2019, c(`Country Group Name`, `European Union`))
+EU_2021 = dplyr::select(projection_2021, c(`Country Group Name`, `European Union`))
+
+EU_2019$yr2019 = 1
+EU_2021$yr2019 = 0
+EU = dplyr::bind_rows(EU_2019, EU_2021)
+
+rm(EU_2019)
+rm(EU_2021)
+
+# ***
+
+EU_gdp <- ggplot(EU, aes(x = `Country Group Name`, y = `European Union`)) +
+  
+  geom_point(data = EU, 
+             aes(x = `Country Group Name`, y = `European Union`,
+                 color = ifelse(yr2019 == 1, "blue", 'red'),
+                 shape = ifelse(yr2019 == 1, "cirlce", "diamond")),
+             show.legend = FALSE, size = 2.5) +
+  
+  geom_smooth(data = EU, 
+              aes(x = `Country Group Name`, y = `European Union`,
+                  color = ifelse(yr2019 == 1, "blue", "red"),
+                  fill = ifelse(yr2019 == 1, "blue", "fireback")),
+              method = "lm", linetype = 'dotted', 
+              size = 0.5) +
+  
+  labs(x = "Year",
+       y = "Gross Domestic Product, current prices ($ billion)") +
+  
+  guides(fill = FALSE) +
+ 
+  scale_color_manual(name = "Projected GDP per Capita", values = c('red','blue'), labels = c('Year 2019', 'Year 2021')) +
+ 
+  ggtitle("Projected GDP per capita") +
+ 
+  theme(axis.title.x = element_text(margin = margin(t = 9), size = 12),
+        axis.title.y = element_text(margin = margin(r = 9), size = 12),
+        legend.position = 'bottom')  
+
+
+plot(EU_gdp)
+
+```
+
+
+## Emerging and Developing Asia 
+```{r warning=FALSE, message=FALSE}
+
+Asia_2019 = dplyr::select(projection_2019, c(`Country Group Name`, `Emerging and developing Asia`))
+Asia_2021 = dplyr::select(projection_2021, c(`Country Group Name`, `Emerging and developing Asia`))
+
+Asia_2019$yr2019 = 1
+Asia_2021$yr2019 = 0
+Asia = dplyr::bind_rows(Asia_2019, Asia_2021)
+
+rm(Asia_2019)
+rm(Asia_2021)
+
+# ***
+
+Asia_gdp <- ggplot(Asia, aes(x = `Country Group Name`, y = `Emerging and developing Asia`)) +
+  
+  geom_point(data = Asia, 
+             aes(x = `Country Group Name`, y = `Emerging and developing Asia`,
+                 color = ifelse(yr2019 == 1, "blue", 'red'),
+                 shape = ifelse(yr2019 == 1, "cirlce", "diamond")),
+             show.legend = FALSE, size = 2.5) +
+  
+  geom_smooth(data = Asia, 
+              aes(x = `Country Group Name`, y = `Emerging and developing Asia`,
+                  color = ifelse(yr2019 == 1, "blue", "red"),
+                  fill = ifelse(yr2019 == 1, "blue", "fireback")),
+              method = "lm", linetype = 'dotted', 
+              size = 0.5) +
+  
+  labs(x = "Year",
+       y = "Gross Domestic Product, current prices ($ billion)") +
+  
+  guides(fill = FALSE) +
+ 
+  scale_color_manual(name = "Projected GDP per Capita", values = c('red','blue'), labels = c('Year 2019', 'Year 2021')) +
+ 
+  ggtitle("Projected GDP per capita") +
+ 
+  theme(axis.title.x = element_text(margin = margin(t = 9), size = 12),
+        axis.title.y = element_text(margin = margin(r = 9), size = 12),
+        legend.position = 'bottom')  
+
+
+plot(Asia_gdp)
+
+```
+
+
+## Sub-Saharan Africa 
+```{r warning=FALSE, message=FALSE}
+
+Africa_2019 = dplyr::select(projection_2019, c(`Country Group Name`, `Sub-Saharan Africa`))
+Africa_2021 = dplyr::select(projection_2021, c(`Country Group Name`, `Sub-Saharan Africa`))
+
+Africa_2019$yr2019 = 1
+Africa_2021$yr2019 = 0
+Africa = dplyr::bind_rows(Africa_2019, Africa_2021)
+
+rm(Africa_2019)
+rm(Africa_2021)
+
+# ***
+
+Africa_gdp <- ggplot(Africa, aes(x = `Country Group Name`, y = `Sub-Saharan Africa`)) +
+  
+  geom_point(data = Africa, 
+             aes(x = `Country Group Name`, y = `Sub-Saharan Africa`,
+                 color = ifelse(yr2019 == 1, "blue", 'red'),
+                 shape = ifelse(yr2019 == 1, "cirlce", "diamond")),
+             show.legend = FALSE, size = 2.5) +
+  
+  geom_smooth(data = Africa, 
+              aes(x = `Country Group Name`, y = `Sub-Saharan Africa`,
+                  color = ifelse(yr2019 == 1, "blue", "red"),
+                  fill = ifelse(yr2019 == 1, "blue", "fireback")),
+              method = "lm", linetype = 'dotted', 
+              size = 0.5) +
+  
+  labs(x = "Year",
+       y = "Gross Domestic Product, current prices ($ billion)") +
+  
+  guides(fill = FALSE) +
+ 
+  scale_color_manual(name = "Projected GDP per Capita", values = c('red','blue'), labels = c('Year 2019', 'Year 2021')) +
+ 
+  ggtitle("Projected GDP per capita") +
+ 
+  theme(axis.title.x = element_text(margin = margin(t = 9), size = 12),
+        axis.title.y = element_text(margin = margin(r = 9), size = 12),
+        legend.position = 'bottom')  
+
+
+plot(Africa_gdp)
+
+```
+
+<br>
+
+According to the visualization, we can observe that the prospect of future GDP per capita was over-estimated during the pre-pandemic. All the country categories, including the World, the G7, the EU, Emerging and Developing Asia and Sub-Saharan Africa, faced negative growth compared to projections after the pandemic. Moreover, we can observe a steep fall in the performance in the year 2020 when the outbreak happened, further indicating the negative impact of COVID on economic performances worldwide. 
+
+However, despite other country categories performing at a lower rate than the prospect level, we can observe that only G7 nations, nations that lead the world economy, are coping with the virus comparably well and are converging to the original prospect level, expecting to perform better in the near future despite the overarching effects of the pandemic. 
+
+
+<br>
+
+The unprecedented outbreak showed the capacity of different nations to cope with the spread of the virus. In the time frame when the vaccination doses, research and supplies were weak and insignificant, various factors impacted the pattern of infection rate and mortality rate of different countries. According to the analysis, before the settlement of vaccination, life expectancy had a crucial role in containing the spread of the virus. However, higher life expectancy indicates other factors contributing to this value mitigating the spread of the pandemic. These include healthy nutrition and workouts, well-established medical infrastructures and various factors. 
+
+Also, the high containment index, which signals the magnitude of strictness the government employs to weaken the spread, correlates with an exchange for economic performance. Therefore, significant factors promoted containing the virus in exchange for further deterioration in the economic performance of its nation.
+
+
+
+ 
